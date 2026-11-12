@@ -158,7 +158,7 @@ function showModel(job, data, a) {
     if (m.kind !== 'weld') group.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: new THREE.Color(css('--fg')), transparent: true, opacity: 0.35 })));
     g.computeBoundingBox(); box.union(g.boundingBox);
   });
-  if (camera.aspect < 0.9 && !a.vertical) group.rotation.y = -Math.PI / 2;  // long horizontal pieces stand up on a portrait phone; columns and ladders keep their real up
+  // real orientation from the model, always: beams horizontal, columns vertical (Bharani, 12-Nov-26)
   scene.add(group);
   radius = box.getBoundingSphere(new THREE.Sphere()).radius;
   view('iso');
