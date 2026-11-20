@@ -49,6 +49,10 @@ footer { background: var(--panel); border-top: 1px solid var(--line);
 .picker h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
 .picker section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
 .picker .job { font-size: 13px; }
+.tip { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 120px); background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; padding: 8px 12px; font-size: 13px; box-shadow: 0 2px 10px rgba(0,0,0,.15); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.tip b { font-family: var(--mono); font-size: 16px; }
+.tip a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+nav.marks a.model { font-family: var(--sans); font-weight: 600; }
 .msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; text-align: center; padding: 16px; }
 </style>
 <style>:root{color-scheme:light}body{margin:0;font-size:14px}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
@@ -71,6 +75,7 @@ footer { background: var(--panel); border-top: 1px solid var(--line);
     <button id="b-side" type="button">Side</button>
     <button id="b-end" type="button">End</button>
   </div>
+  <div class="tip" id="tip" hidden></div>
   <div class="msg" id="msg" hidden></div>
 </main>
 <footer id="ftr" hidden>
@@ -79,7 +84,7 @@ footer { background: var(--panel); border-top: 1px solid var(--line);
 </footer>
 <div class="picker" id="picker" hidden>
   <h1>ACF 3D assemblies</h1>
-  <p class="note">Scan the QR code on an assembly drawing, or pick a piece below. Drag to rotate, pinch to zoom.</p>
+  <p class="note">Scan the QR code on a drawing, or pick a piece below. Drag to rotate, pinch to zoom, tap a piece to see its mark.</p>
   <div id="joblist"></div>
 </div>
 
@@ -115,6 +120,9 @@ function initGL() {
   const d = new THREE.DirectionalLight(0xffffff, 0.75); d.position.set(1, -2, 3); scene.add(d);
   const d2 = new THREE.DirectionalLight(0xffffff, 0.3); d2.position.set(-2, 1, -1); scene.add(d2);
   new ResizeObserver(resize).observe($('stage'));
+  let down = null; const cv = renderer.domElement;
+  cv.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+  cv.addEventListener('pointerup', e => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 6) pick(e); down = null; });
   (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
 }
 function resize() {
@@ -134,9 +142,20 @@ function view(dir) {
   camera.position.copy(v.multiplyScalar(dist)); controls.target.set(0, 0, 0);
   camera.near = dist / 200; camera.far = dist * 20; camera.updateProjectionMatrix();
 }
+let picked = null, tipFor = null;
+function pick(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const hit = ray.intersectObjects(group.children.filter(o => o.isMesh && o.userData.label), false)[0];
+  if (picked) { picked.material.emissive.setHex(0); picked = null; }
+  if (!hit) { $('tip').hidden = true; return; }
+  picked = hit.object; picked.material.emissive.set(css('--accent')); picked.material.emissiveIntensity = 0.55;
+  $('tip').innerHTML = tipFor(picked.userData); $('tip').hidden = false;
+}
+function clearTip() { picked = null; $('tip').hidden = true; }
 function color(kind) { return new THREE.Color(css({ main: '--main', part: '--part', bolt: '--bolt', weld: '--weld' }[kind] || '--main')); }
 
-function showModel(job, data, a) {
+function showModel(job, data, a, j0) {
   $('picker').hidden = true; ['hdr', 'stage', 'ftr'].forEach(i => $(i).hidden = false);
   initGL(); resize();
   $('mark').textContent = a.mark;
@@ -147,14 +166,16 @@ function showModel(job, data, a) {
     const el = document.createElement('a'); el.href = '#' + slug(job, m); el.textContent = m;
     if (m === a.mark) el.setAttribute('aria-current', 'true'); $('marks').append(el);
   });
+  if (j0 && j0.model) { const el = document.createElement('a'); el.href = `#${job}-model`; el.textContent = 'Whole model'; el.className = 'model'; $('marks').prepend(el); }
   if (group) scene.remove(group);
-  group = new THREE.Group();
+  group = new THREE.Group(); clearTip();
+  tipFor = u => `<b>${u.label}</b><span>${u.kind === 'bolt' ? 'bolt' : u.kind === 'main' ? 'main member of ' + a.mark : 'part on ' + a.mark}</span>`;
   const box = new THREE.Box3();
   a.meshes.forEach(m => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(m.v, 3)); g.setIndex(m.f); g.computeVertexNormals();
     const mat = new THREE.MeshStandardMaterial({ color: color(m.kind), metalness: 0.15, roughness: 0.65, flatShading: true, polygonOffset: true, polygonOffsetFactor: 1 });
-    const mesh = new THREE.Mesh(g, mat); group.add(mesh);
+    const mesh = new THREE.Mesh(g, mat); mesh.userData = { label: m.name, kind: m.kind }; group.add(mesh);
     if (m.kind !== 'weld') group.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: new THREE.Color(css('--fg')), transparent: true, opacity: 0.35 })));
     g.computeBoundingBox(); box.union(g.boundingBox);
   });
@@ -174,12 +195,38 @@ function showModel(job, data, a) {
   $('note').textContent = `From the SDS2 model issued with Trans ${data.trans} (${data.issued}). For viewing only – the shop drawing governs all dimensions.`;
 }
 
+function showWhole(job, data, md) {
+  $('picker').hidden = true; ['hdr', 'stage', 'ftr'].forEach(i => $(i).hidden = false);
+  initGL(); resize();
+  $('mark').textContent = 'Whole model';
+  $('job').textContent = `${data.job} · ${data.client_job} · ${data.project}`;
+  document.title = `Whole model · ${data.job} – ACF 3D`;
+  $('marks').innerHTML = `<a href="#${job}-model" class="model" aria-current="true">Whole model</a>` + Object.keys(data.assemblies).sort().map(m => `<a href="#${slug(job, m)}">${m}</a>`).join('');
+  if (group) scene.remove(group);
+  group = new THREE.Group(); clearTip();
+  const edge = new THREE.LineBasicMaterial({ color: new THREE.Color(css('--fg')), transparent: true, opacity: 0.25 });
+  md.members.forEach(m => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(m.v.map(x => x * md.scale), 3)); g.setIndex(m.f); g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: color('main'), metalness: 0.15, roughness: 0.65, flatShading: true, polygonOffset: true, polygonOffsetFactor: 1 }));
+    mesh.userData = { label: m.mark }; group.add(mesh);
+    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), edge));
+  });
+  tipFor = u => { const a = data.assemblies[u.label]; const n = md.members.filter(x => x.mark === u.label).length;
+    return `<b>${u.label}</b><span>${a ? Object.keys(a.parts).length + ' part' + (Object.keys(a.parts).length > 1 ? 's' : '') + ' · ' : ''}${n} in model</span><a href="#${slug(job, u.label)}">Open ${u.label} &rarr;</a>`; };
+  scene.add(group); view('iso');
+  const [L, W, H] = md.size_in;
+  $('size').textContent = `Overall ${ftin(L)} × ${ftin(W)} × ${ftin(H)} · ${md.members.length} pieces`;
+  $('parts').innerHTML = '<span>Tap a piece to see its mark</span>';
+  $('note').textContent = `From the SDS2 model issued with Trans ${md.trans} (${md.issued}). Released assemblies only – existing steel and bolts not shown. For viewing only – the shop drawings govern.`;
+}
+
 function showPicker(note) {
   ['hdr', 'stage', 'ftr'].forEach(i => $(i).hidden = true); $('picker').hidden = false;
   document.title = 'ACF 3D Assemblies';
   $('joblist').innerHTML = (note ? `<p class="note">${note}</p>` : '') + index.map(j => `
     <section><div class="job">${j.job} · ${j.client_job} · ${j.project} · Trans ${j.trans}</div>
-    <nav class="marks">${j.marks.map(m => `<a href="#${slug(j.job, m)}">${m}</a>`).join('')}</nav></section>`).join('');
+    <nav class="marks">${j.model ? `<a href="#${j.job}-model" class="model">Whole model</a>` : ''}${j.marks.map(m => `<a href="#${slug(j.job, m)}">${m}</a>`).join('')}</nav></section>`).join('');
 }
 
 async function route() {
@@ -189,9 +236,10 @@ async function route() {
     const j = index.find(j => h.startsWith(j.job + '-'));
     if (!j) return showPicker(h ? `No assembly found for “${h}”.` : '');
     const data = await getJSON(`data/${j.job}.json`);
+    if (h === j.job + '-model') return showWhole(j.job, data, await getJSON(`data/${j.job}-model.json`));
     const mark = Object.keys(data.assemblies).find(m => slug(j.job, m) === h);
     if (!mark) return showPicker(`${j.job}: no assembly “${h.slice(j.job.length + 1)}” in this release.`);
-    showModel(j.job, data, data.assemblies[mark]);
+    showModel(j.job, data, data.assemblies[mark], j);
   } catch (e) {
     showPicker(''); $('joblist').innerHTML = '<p class="note">The models could not load. Reload the page; if it keeps failing, tell the detailing office.</p>';
   }
