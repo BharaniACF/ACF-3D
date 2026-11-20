@@ -212,13 +212,17 @@ function showWhole(job, data, md) {
     mesh.userData = { label: m.mark }; group.add(mesh);
     group.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), edge));
   });
+  if (md.existing && md.existing.length) {
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(md.existing.map(x => x * md.scale), 3));
+    group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: new THREE.Color(css('--muted')), transparent: true, opacity: 0.6 })));
+  }
   tipFor = u => { const a = data.assemblies[u.label]; const n = md.members.filter(x => x.mark === u.label).length;
     return `<b>${u.label}</b><span>${a ? Object.keys(a.parts).length + ' part' + (Object.keys(a.parts).length > 1 ? 's' : '') + ' · ' : ''}${n} in model</span><a href="#${slug(job, u.label)}">Open ${u.label} &rarr;</a>`; };
   scene.add(group); view('iso');
   const [L, W, H] = md.size_in;
   $('size').textContent = `Overall ${ftin(L)} × ${ftin(W)} × ${ftin(H)} · ${md.members.length} pieces`;
   $('parts').innerHTML = '<span>Tap a piece to see its mark</span>';
-  $('note').textContent = `From the SDS2 model issued with Trans ${md.trans} (${md.issued}). Released assemblies only – existing steel and bolts not shown. For viewing only – the shop drawings govern.`;
+  $('note').textContent = `From the SDS2 model issued with Trans ${md.trans} (${md.issued}). Released assemblies solid; existing steel and concrete shown as grey lines; bolts and anchors not shown. For viewing only – the shop drawings govern.`;
 }
 
 function showPicker(note) {
