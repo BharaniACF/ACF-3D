@@ -54,6 +54,7 @@ footer { background: var(--panel); border-top: 1px solid var(--line);
 .tip b { font-family: var(--mono); font-size: 16px; }
 .tip a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
 nav.marks a.model { font-family: var(--sans); font-weight: 600; }
+nav.marks select { font-family: var(--mono); font-size: 13px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; max-width: 70vw; }
 .msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; text-align: center; padding: 16px; }
 </style>
 <style>:root{color-scheme:light}body{margin:0;font-size:14px}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
@@ -108,6 +109,21 @@ function ftin(inches) {
 }
 const slug = (job, mark) => `${job}-${mark.toLowerCase().replace(/_/g, '-')}`;
 
+// marks list: chips for small jobs, a drop-down for big ones so the 3D view keeps the screen (26-Nov-26, 26-310 has 333)
+function fillMarks(nav, job, marks, current, hasModel) {
+  nav.innerHTML = '';
+  if (hasModel) { const el = document.createElement('a'); el.href = `#${job}-model`; el.textContent = 'Whole model'; el.className = 'model';
+    if (current === null) el.setAttribute('aria-current', 'true'); nav.append(el); }
+  if (marks.length > 24) {
+    const sel = document.createElement('select'); sel.setAttribute('aria-label', 'Go to piece');
+    sel.innerHTML = `<option value="">Go to piece (${marks.length})…</option>` + marks.map(m => `<option value="${slug(job, m)}"${m === current ? ' selected' : ''}>${m}</option>`).join('');
+    sel.onchange = () => { if (sel.value) location.hash = sel.value; };
+    nav.append(sel);
+  } else marks.forEach(m => {
+    const el = document.createElement('a'); el.href = '#' + slug(job, m); el.textContent = m;
+    if (m === current) el.setAttribute('aria-current', 'true'); nav.append(el);
+  });
+}
 async function getJSON(p) { if (!cache[p]) cache[p] = fetch(p).then(r => { if (!r.ok) throw new Error(p); return r.json(); }); return cache[p]; }
 
 function initGL() {
@@ -174,12 +190,7 @@ function showModel(job, data, a, j0) {
   $('mark').textContent = a.mark;
   $('job').textContent = `${data.job} · ${data.client_job} · ${data.project}`;
   document.title = `${a.mark} · ${data.job} – ACF 3D`;
-  $('marks').innerHTML = '';
-  Object.keys(data.assemblies).sort().forEach(m => {
-    const el = document.createElement('a'); el.href = '#' + slug(job, m); el.textContent = m;
-    if (m === a.mark) el.setAttribute('aria-current', 'true'); $('marks').append(el);
-  });
-  if (j0 && j0.model) { const el = document.createElement('a'); el.href = `#${job}-model`; el.textContent = 'Whole model'; el.className = 'model'; $('marks').prepend(el); }
+  fillMarks($('marks'), job, Object.keys(data.assemblies).sort(), a.mark, !!(j0 && j0.model));
   if (group) scene.remove(group);
   group = new THREE.Group(); clearTip();
   tipFor = u => `<b>${u.label}</b><span>${u.kind === 'bolt' ? 'bolt' : u.kind === 'main' ? 'main member of ' + a.mark : 'part on ' + a.mark}</span>`;
@@ -214,7 +225,7 @@ function showWhole(job, data, md) {
   $('mark').textContent = 'Whole model';
   $('job').textContent = `${data.job} · ${data.client_job} · ${data.project}`;
   document.title = `Whole model · ${data.job} – ACF 3D`;
-  $('marks').innerHTML = `<a href="#${job}-model" class="model" aria-current="true">Whole model</a>` + Object.keys(data.assemblies).sort().map(m => `<a href="#${slug(job, m)}">${m}</a>`).join('');
+  fillMarks($('marks'), job, Object.keys(data.assemblies).sort(), null, true);
   if (group) scene.remove(group);
   group = new THREE.Group(); clearTip();
   const edge = new THREE.LineBasicMaterial({ color: new THREE.Color(css('--fg')), transparent: true, opacity: 0.25 });
@@ -261,9 +272,10 @@ function showWhole(job, data, md) {
 function showPicker(note) {
   ['hdr', 'stage', 'ftr'].forEach(i => $(i).hidden = true); $('picker').hidden = false;
   document.title = 'ACF 3D Assemblies';
-  $('joblist').innerHTML = (note ? `<p class="note">${note}</p>` : '') + index.map(j => `
+  $('joblist').innerHTML = (note ? `<p class="note">${note}</p>` : '') + index.map((j, k) => `
     <section><div class="job">${j.job} · ${j.client_job} · ${j.project} · Trans ${j.trans}</div>
-    <nav class="marks">${j.model ? `<a href="#${j.job}-model" class="model">Whole model</a>` : ''}${j.marks.map(m => `<a href="#${slug(j.job, m)}">${m}</a>`).join('')}</nav></section>`).join('');
+    <nav class="marks" id="pk${k}"></nav></section>`).join('');
+  index.forEach((j, k) => fillMarks($('pk' + k), j.job, j.marks, undefined, !!j.model));
 }
 
 async function route() {
@@ -276,7 +288,9 @@ async function route() {
     if (h === j.job + '-model') return showWhole(j.job, data, await getJSON(`data/${j.job}-model.json`));
     const mark = Object.keys(data.assemblies).find(m => slug(j.job, m) === h);
     if (!mark) return showPicker(`${j.job}: no assembly “${h.slice(j.job.length + 1)}” in this release.`);
-    showModel(j.job, data, data.assemblies[mark], j);
+    // split jobs (26-Nov-26): data/<job>.json holds marks + parts only; the meshes are in data/<job>/<mark>.json
+    const a = data.split ? await getJSON(`data/${j.job}/${h.slice(j.job.length + 1)}.json`) : data.assemblies[mark];
+    showModel(j.job, data, a, j);
   } catch (e) {
     showPicker(''); $('joblist').innerHTML = '<p class="note">The models could not load. Reload the page; if it keeps failing, tell the detailing office.</p>';
   }
